@@ -1,0 +1,7 @@
+port: ${PORT:8080}
+mongo:
+  url: ${MONGO_HOST:mongodb://mongo:37017}
+  db_name: ${MONGO_DB:dbname}
+  username: ${MONGO_USER:user}
+  password: ${MONGO_PASSWORD:password}
+app_id: ${APP_ID:app-id}
