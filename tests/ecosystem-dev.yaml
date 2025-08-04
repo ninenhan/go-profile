@@ -4,4 +4,5 @@ mongo:
   db_name: ${MONGO_DB:dbname}
   username: ${MONGO_USER:user}
   password: ${MONGO_PASSWORD:password}
-app_id: ${APP_ID:app-id}
+#app_id: ${APP_ID:app-id}
+app_id: !include ./demo.tpl
