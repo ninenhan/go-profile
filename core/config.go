@@ -13,8 +13,11 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
+
+var envPlaceholderPattern = regexp.MustCompile(`\${([^:}]+):([^}]+)}`)
 
 type AppConfig struct {
 	Port int `mapstructure:"port"` // 端口
@@ -54,6 +57,12 @@ func ReloadDefault() {
 }
 
 func Reload[T any]() (*ProfileConfig[T], error) {
+	return ReloadWithValues[T](nil)
+}
+
+// ReloadWithValues loads the active profile using values as the first source
+// for existing ${NAME:default} placeholders. Keys are matched exactly.
+func ReloadWithValues[T any](values map[string]any) (*ProfileConfig[T], error) {
 	active := os.Getenv("ACTIVE_PROFILE")
 	activePath := os.Getenv("ACTIVE_PROFILE_PATH")
 	var envValue = ""
@@ -63,7 +72,7 @@ func Reload[T any]() (*ProfileConfig[T], error) {
 	configPath := fmt.Sprintf("ecosystem%s.yaml", envValue)
 	finPath := utils.Ternary(activePath != "", path.Join(activePath, configPath), configPath)
 	log.Printf("Loading config envValue = %s , path = %s", active, finPath)
-	config, err := LoadEcoConfig[T](finPath)
+	config, err := LoadEcoConfigWithValues[T](finPath, values)
 	if err != nil {
 		log.Fatalln("Failed to load config", "error", err)
 		return nil, err
@@ -74,31 +83,61 @@ func Reload[T any]() (*ProfileConfig[T], error) {
 	}, nil
 }
 
-// 替换字符串中的占位符 ${ENV_VAR:default}，
-// 如果环境变量存在，则替换成环境变量的值，否则使用默认值。
-func replaceWithEnvVars(input string) string {
-	// 定义正则表达式，匹配 ${ENV_VAR:default_value} 格式
-	re := regexp.MustCompile(`\${([^:}]+):([^}]+)}`)
-	// 查找所有匹配的占位符
-	matches := re.FindAllStringSubmatch(input, -1)
-	// 如果没有匹配到任何占位符，直接返回原字符串
-	if len(matches) == 0 {
-		return input
-	}
-	// 遍历所有匹配的占位符并进行替换
+// replaceWithValues replaces ${NAME:default} placeholders. Explicit values
+// take precedence over process environment variables and YAML defaults.
+func replaceWithValues(input string, values map[string]any) (string, error) {
+	matches := envPlaceholderPattern.FindAllStringSubmatch(input, -1)
 	for _, match := range matches {
-		envVar := match[1]       // 环境变量名
-		defaultValue := match[2] // 默认值（可能是更复杂的字符串）
-		// 获取环境变量的值，如果没有设置则使用默认值
-		envValue := os.Getenv(envVar)
-		if envValue == "" {
-			envValue = defaultValue
+		name := match[1]
+		value, exists := values[name]
+		var replacement string
+		if exists {
+			var err error
+			replacement, err = scalarString(value)
+			if err != nil {
+				return "", fmt.Errorf("config value %q: %w", name, err)
+			}
+		} else if replacement = os.Getenv(name); replacement == "" {
+			replacement = match[2]
 		}
-		// 替换原始字符串中的占位符为相应的环境变量值或默认值
-		input = strings.Replace(input, match[0], envValue, -1)
+		input = strings.ReplaceAll(input, match[0], replacement)
 	}
-	// 返回最终替换后的字符串
-	return input
+	return input, nil
+}
+
+func scalarString(value any) (string, error) {
+	switch value := value.(type) {
+	case string:
+		return value, nil
+	case bool:
+		return strconv.FormatBool(value), nil
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64), nil
+	case float32:
+		return strconv.FormatFloat(float64(value), 'f', -1, 32), nil
+	case int:
+		return strconv.Itoa(value), nil
+	case int8:
+		return strconv.FormatInt(int64(value), 10), nil
+	case int16:
+		return strconv.FormatInt(int64(value), 10), nil
+	case int32:
+		return strconv.FormatInt(int64(value), 10), nil
+	case int64:
+		return strconv.FormatInt(value, 10), nil
+	case uint:
+		return strconv.FormatUint(uint64(value), 10), nil
+	case uint8:
+		return strconv.FormatUint(uint64(value), 10), nil
+	case uint16:
+		return strconv.FormatUint(uint64(value), 10), nil
+	case uint32:
+		return strconv.FormatUint(uint64(value), 10), nil
+	case uint64:
+		return strconv.FormatUint(value, 10), nil
+	default:
+		return "", fmt.Errorf("unsupported scalar type %T", value)
+	}
 }
 
 // 递归把所有 tag == "!include" 的节点替换为文件内容
@@ -126,13 +165,21 @@ func resolveIncludes(node *yaml.Node, baseDir string) error {
 }
 
 func LoadEcoConfig[T any](configPath string) (*T, error) {
+	return LoadEcoConfigWithValues[T](configPath, nil)
+}
+
+// LoadEcoConfigWithValues loads one config file with exact-name placeholder values.
+func LoadEcoConfigWithValues[T any](configPath string, values map[string]any) (*T, error) {
 	// 读取整个 YAML 配置文件的字节内容
 	fs, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Fatalf("Error reading the config file as a string: %s", err)
 	}
 	str := string(fs)
-	raw := replaceWithEnvVars(str)
+	raw, err := replaceWithValues(str, values)
+	if err != nil {
+		return nil, err
+	}
 
 	// 2. 用 yaml.v3 先解成节点树
 	var root yaml.Node
