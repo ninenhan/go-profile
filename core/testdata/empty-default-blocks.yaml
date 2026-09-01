@@ -1,0 +1,7 @@
+anchor_value: &shared "${PROFILE_BLOCK_ANCHOR:}"
+alias_value: *shared
+literal: |
+  first=${PROFILE_BLOCK_FIRST:}
+  second=${PROFILE_BLOCK_SECOND:two}
+folded: >
+  prefix ${PROFILE_BLOCK_FOLDED:} suffix

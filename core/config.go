@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-var envPlaceholderPattern = regexp.MustCompile(`\${([^:}]+):([^}]+)}`)
+var envPlaceholderPattern = regexp.MustCompile(`\${([^:}]+):([^}]*)}`)
 
 type AppConfig struct {
 	Port int `mapstructure:"port"` // 端口
