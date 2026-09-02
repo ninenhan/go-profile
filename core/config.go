@@ -2,11 +2,8 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"github.com/fsnotify/fsnotify"
-	"github.com/ninenhan/go-profile/utils"
-	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
 	"os"
@@ -15,6 +12,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/ninenhan/go-profile/utils"
+	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 var envPlaceholderPattern = regexp.MustCompile(`\${([^:}]+):([^}]*)}`)
@@ -111,6 +113,8 @@ func scalarString(value any) (string, error) {
 		return value, nil
 	case bool:
 		return strconv.FormatBool(value), nil
+	case json.Number:
+		return value.String(), nil
 	case float64:
 		return strconv.FormatFloat(value, 'f', -1, 64), nil
 	case float32:

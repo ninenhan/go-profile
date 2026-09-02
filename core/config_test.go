@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -124,6 +125,27 @@ from_default: ${PROFILE_TEST_NOT_SET:from-default}
 	}
 	t.Log("config", config)
 
+}
+
+func TestLoadEcoConfigWithValuesSupportsJSONNumber(t *testing.T) {
+	configPath := writeTestConfig(t, `
+workers: ${PROFILE_TEST_WORKERS:1}
+original_field: "${PROFILE_TEST_EXACT_NUMBER:default}"
+`)
+
+	config, err := LoadEcoConfigWithValues[valuesTestConfig](configPath, map[string]any{
+		"PROFILE_TEST_WORKERS":      json.Number("3306"),
+		"PROFILE_TEST_EXACT_NUMBER": json.Number("9007199254740993"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Workers != 3306 {
+		t.Fatalf("workers = %d, want 3306", config.Workers)
+	}
+	if config.OriginalField != "9007199254740993" {
+		t.Fatalf("exact number = %q, want preserved representation", config.OriginalField)
+	}
 }
 
 func TestLoadEcoConfigWithValuesRejectsComplexValueWithoutLeakingIt(t *testing.T) {
