@@ -6,7 +6,7 @@ external_empty: "${PROFILE_EMPTY_EXTERNAL_EMPTY:fallback}"
 enabled: ${PROFILE_EMPTY_BOOL:}
 workers: ${PROFILE_EMPTY_WORKERS:}
 url: "${PROFILE_EMPTY_URL:https://example.test/api:v1}"
-legacy_empty: ${PROFILE_EMPTY_LEGACY:""}
+legacy_empty: ${PROFILE_EMPTY_LEGACY:}
 embedded: "prefix-${PROFILE_EMPTY_EMBEDDED:}-suffix"
 repeated: "${PROFILE_EMPTY_REPEAT:}/${PROFILE_EMPTY_REPEAT:}"
 single_quoted: '${PROFILE_EMPTY_SINGLE_QUOTED:}'

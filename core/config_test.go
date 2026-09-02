@@ -49,6 +49,25 @@ type emptyDefaultBlockConfig struct {
 	Folded      string `mapstructure:"folded"`
 }
 
+type pastedYAMLConfig struct {
+	Name     string `mapstructure:"name"`
+	Optional string `mapstructure:"optional"`
+	Nested   struct {
+		Value string `mapstructure:"value"`
+	} `mapstructure:"nested"`
+	List      []string          `mapstructure:"list"`
+	InlineMap map[string]string `mapstructure:"inline_map"`
+	Literal   string            `mapstructure:"literal"`
+}
+
+type includeConfig struct {
+	Prompt string `mapstructure:"prompt"`
+	Nested struct {
+		Template string `mapstructure:"template"`
+	} `mapstructure:"nested"`
+	Templates []string `mapstructure:"templates"`
+}
+
 func TestLoadEcoConfigRemainsBackwardCompatible(t *testing.T) {
 	t.Setenv("PROFILE_TEST_FROM_ENV", "from-environment")
 	configPath := writeTestConfig(t, `
@@ -70,6 +89,7 @@ from_default: ${PROFILE_TEST_NOT_SET:from-default}
 	if !reflect.DeepEqual(legacy, withNilValues) {
 		t.Fatalf("legacy API behavior changed: legacy=%#v new=%#v", legacy, withNilValues)
 	}
+	t.Log("legacy", legacy, "withNilValues", withNilValues)
 }
 
 func TestLoadEcoConfigWithValues(t *testing.T) {
@@ -102,6 +122,8 @@ from_default: ${PROFILE_TEST_NOT_SET:from-default}
 	if got := os.Getenv(externalName); got != "environment-must-not-win" {
 		t.Fatalf("LoadEcoConfigWithValues mutated process environment: %q", got)
 	}
+	t.Log("config", config)
+
 }
 
 func TestLoadEcoConfigWithValuesRejectsComplexValueWithoutLeakingIt(t *testing.T) {
@@ -128,6 +150,7 @@ func TestLoadEcoConfigSupportsEmptyDefaultsInScalarYAML(t *testing.T) {
 			"PROFILE_EMPTY_FROM_VALUES":    "from-values",
 			"PROFILE_EMPTY_EXTERNAL_EMPTY": "",
 			"PROFILE_EMPTY_BOOL":           true,
+			"PROFILE_EMPTY_LEGACY":         "",
 			"PROFILE_EMPTY_WORKERS":        float64(4),
 			"PROFILE_EMPTY_EMBEDDED":       "middle",
 			"PROFILE_EMPTY_REPEAT":         "same",
@@ -152,6 +175,7 @@ func TestLoadEcoConfigSupportsEmptyDefaultsInScalarYAML(t *testing.T) {
 	if !reflect.DeepEqual(config, want) {
 		t.Fatalf("scalar YAML mismatch:\n got: %#v\nwant: %#v", config, want)
 	}
+	t.Log("legacy", config, "want", want)
 }
 
 func TestLoadEcoConfigSupportsEmptyDefaultsInCollectionYAML(t *testing.T) {
@@ -202,6 +226,132 @@ func TestLoadEcoConfigSupportsEmptyDefaultsInAnchorsAndBlocks(t *testing.T) {
 	}
 	if config.Folded != "prefix  suffix\n" {
 		t.Fatalf("folded block = %q", config.Folded)
+	}
+}
+
+func TestLoadEcoConfigWithValuesParsesPastedYAML(t *testing.T) {
+	t.Setenv("PROFILE_PASTED_FROM_ENV", "environment-value")
+
+	tests := []struct {
+		name   string
+		yaml   string
+		values map[string]any
+		want   *pastedYAMLConfig
+	}{
+		{
+			name: "block collections and empty defaults",
+			yaml: `
+name: "${PROFILE_PASTED_NAME:}"
+optional: ${PROFILE_PASTED_OPTIONAL:}
+nested:
+  value: "${PROFILE_PASTED_FROM_ENV:}"
+list:
+  - "${PROFILE_PASTED_LIST_FIRST:}"
+  - "${PROFILE_PASTED_LIST_SECOND:second-default}"
+inline_map: {empty: "${PROFILE_PASTED_MAP_EMPTY:}", set: "${PROFILE_PASTED_MAP_SET:default}"}
+literal: |
+  first=${PROFILE_PASTED_BLOCK_FIRST:}
+  second=${PROFILE_PASTED_BLOCK_SECOND:two}
+`,
+			values: map[string]any{
+				"PROFILE_PASTED_NAME":       "pasted-service",
+				"PROFILE_PASTED_LIST_FIRST": "first",
+				"PROFILE_PASTED_MAP_SET":    "map-value",
+			},
+			want: &pastedYAMLConfig{
+				Name: "pasted-service",
+				Nested: struct {
+					Value string `mapstructure:"value"`
+				}{Value: "environment-value"},
+				List:      []string{"first", "second-default"},
+				InlineMap: map[string]string{"empty": "", "set": "map-value"},
+				Literal:   "first=\nsecond=two\n",
+			},
+		},
+		{
+			name: "flow collections and explicit empty value",
+			yaml: `
+name: ${PROFILE_PASTED_FLOW_NAME:flow-default}
+optional: "${PROFILE_PASTED_EXPLICIT_EMPTY:fallback}"
+nested: {value: "${PROFILE_PASTED_NESTED:nested-default}"}
+list: ["${PROFILE_PASTED_FLOW_FIRST:}", "${PROFILE_PASTED_FLOW_SECOND:second}"]
+inline_map: {empty: "${PROFILE_PASTED_FLOW_EMPTY:}", set: "${PROFILE_PASTED_FLOW_SET:set-default}"}
+literal: "prefix-${PROFILE_PASTED_FLOW_MIDDLE:}-suffix"
+`,
+			values: map[string]any{
+				"PROFILE_PASTED_EXPLICIT_EMPTY": "",
+				"PROFILE_PASTED_FLOW_FIRST":     "first",
+				"PROFILE_PASTED_FLOW_MIDDLE":    "middle",
+			},
+			want: &pastedYAMLConfig{
+				Name: "flow-default",
+				Nested: struct {
+					Value string `mapstructure:"value"`
+				}{Value: "nested-default"},
+				List:      []string{"first", "second"},
+				InlineMap: map[string]string{"empty": "", "set": "set-default"},
+				Literal:   "prefix-middle-suffix",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, err := LoadEcoConfigWithValues[pastedYAMLConfig](writeTestConfig(t, tt.yaml), tt.values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(config, tt.want) {
+				t.Fatalf("pasted YAML mismatch:\n got: %#v\nwant: %#v", config, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadEcoConfigWithValuesSupportsIncludeInPastedYAML(t *testing.T) {
+	configDir := t.TempDir()
+	writeTestFile(t, configDir, "prompt.tpl", "system: keep field names\nline #2\n")
+	writeTestFile(t, configDir, "nested/message.txt", "nested template\nwith: colon\n")
+	writeTestFile(t, configDir, "items/first.txt", "first item")
+	writeTestFile(t, configDir, "items/second.txt", "second item\n")
+
+	configPath := filepath.Join(configDir, "ecosystem.yaml")
+	writeFile(t, configPath, `
+prompt: !include ${PROFILE_INCLUDE_PROMPT:prompt.tpl}
+nested:
+  template: !include ./nested/message.txt
+templates:
+  - !include ./items/first.txt
+  - !include ${PROFILE_INCLUDE_SECOND:./items/default.txt}
+`)
+
+	config, err := LoadEcoConfigWithValues[includeConfig](configPath, map[string]any{
+		"PROFILE_INCLUDE_SECOND": "./items/second.txt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &includeConfig{
+		Prompt: "system: keep field names\nline #2\n",
+		Nested: struct {
+			Template string `mapstructure:"template"`
+		}{Template: "nested template\nwith: colon\n"},
+		Templates: []string{"first item", "second item\n"},
+	}
+	if !reflect.DeepEqual(config, want) {
+		t.Fatalf("!include YAML mismatch:\n got: %#v\nwant: %#v", config, want)
+	}
+}
+
+func TestLoadEcoConfigWithValuesIncludeReportsMissingRelativeFile(t *testing.T) {
+	configPath := writeTestConfig(t, `prompt: !include ${PROFILE_INCLUDE_MISSING:./missing.tpl}`)
+
+	_, err := LoadEcoConfigWithValues[includeConfig](configPath, nil)
+	if err == nil {
+		t.Fatal("expected missing !include file to return an error")
+	}
+	if !strings.Contains(err.Error(), "missing.tpl") {
+		t.Fatalf("missing !include error = %q", err)
 	}
 }
 
@@ -275,8 +425,22 @@ func TestScalarStringSupportsAllScalarTypes(t *testing.T) {
 func writeTestConfig(t *testing.T, content string) string {
 	t.Helper()
 	configPath := filepath.Join(t.TempDir(), "ecosystem.yaml")
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+	writeFile(t, configPath, content)
+	return configPath
+}
+
+func writeTestFile(t *testing.T, baseDir, name, content string) {
+	t.Helper()
+	filePath := filepath.Join(baseDir, name)
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return configPath
+	writeFile(t, filePath, content)
+}
+
+func writeFile(t *testing.T, filePath, content string) {
+	t.Helper()
+	if err := os.WriteFile(filePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
