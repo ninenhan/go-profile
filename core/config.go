@@ -52,12 +52,18 @@ type ProfileConfig[T any] struct {
 
 var DefaultConfig *ProfileConfig[EcoSystemConfig]
 
+// ReloadDefault updates DefaultConfig on success and logs failures without replacing it.
 func ReloadDefault() {
-	if config, err := Reload[EcoSystemConfig](); err == nil {
-		DefaultConfig = config
+	config, err := Reload[EcoSystemConfig]()
+	if err != nil {
+		log.Printf("Failed to load default config: %v", err)
+		return
 	}
+	DefaultConfig = config
 }
 
+// Reload loads ecosystem[-ACTIVE_PROFILE].yaml from ACTIVE_PROFILE_PATH.
+// Errors are returned to the caller without terminating the process.
 func Reload[T any]() (*ProfileConfig[T], error) {
 	return ReloadWithValues[T](nil)
 }
@@ -76,7 +82,6 @@ func ReloadWithValues[T any](values map[string]any) (*ProfileConfig[T], error) {
 	log.Printf("Loading config envValue = %s , path = %s", active, finPath)
 	config, err := LoadEcoConfigWithValues[T](finPath, values)
 	if err != nil {
-		log.Fatalln("Failed to load config", "error", err)
 		return nil, err
 	}
 	return &ProfileConfig[T]{
@@ -168,62 +173,57 @@ func resolveIncludes(node *yaml.Node, baseDir string) error {
 	return nil
 }
 
+// LoadEcoConfig loads a YAML file into a new config without changing global state.
+// Read, placeholder, include, parse and decode failures return a nil config and an error.
+// The caller is responsible for business validation and applying the result.
 func LoadEcoConfig[T any](configPath string) (*T, error) {
 	return LoadEcoConfigWithValues[T](configPath, nil)
 }
 
 // LoadEcoConfigWithValues loads one config file with exact-name placeholder values.
+// Like LoadEcoConfig, each call uses an independent Viper instance.
 func LoadEcoConfigWithValues[T any](configPath string, values map[string]any) (*T, error) {
-	// 读取整个 YAML 配置文件的字节内容
 	fs, err := os.ReadFile(configPath)
 	if err != nil {
-		log.Fatalf("Error reading the config file as a string: %s", err)
+		return nil, fmt.Errorf("read config %q: %w", configPath, err)
 	}
 	str := string(fs)
 	raw, err := replaceWithValues(str, values)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("replace placeholders in config %q: %w", configPath, err)
 	}
 
-	// 2. 用 yaml.v3 先解成节点树
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(raw), &root); err != nil {
-		return nil, fmt.Errorf("yaml.Unmarshal 失败: %w", err)
+		return nil, fmt.Errorf("parse config %q: %w", configPath, err)
 	}
 
-	// 3. 处理 !include
 	baseDir := filepath.Dir(configPath)
 	if err := resolveIncludes(&root, baseDir); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve includes in config %q: %w", configPath, err)
 	}
 
-	// 4. 把处理好 include 的节点树再 Marshal 回 []byte
 	merged, err := yaml.Marshal(&root)
 	if err != nil {
-		return nil, fmt.Errorf("yaml.Marshal 失败: %w", err)
+		return nil, fmt.Errorf("marshal config %q: %w", configPath, err)
 	}
-	viper.Reset()
-	//viper.SetConfigFile(configPath)
-	viper.SetConfigType("yaml")
-	viper.SetTypeByDefaultValue(true)
-	//if err := viper.ReadInConfig(); err != nil {
-	//	return nil, err
-	//}
-	// 自动绑定环境变量
-	viper.AutomaticEnv()
-	viper.AllowEmptyEnv(true)
+	v := viper.New()
+	v.SetConfigType("yaml")
+	v.SetTypeByDefaultValue(true)
+	v.AutomaticEnv()
+	v.AllowEmptyEnv(true)
 	var config T
-	if err := viper.ReadConfig(bytes.NewBuffer(merged)); err != nil {
-		log.Fatalf("Error reading config from byte data: %s", err)
+	if err := v.ReadConfig(bytes.NewReader(merged)); err != nil {
+		return nil, fmt.Errorf("read YAML config %q: %w", configPath, err)
 	}
-	// 功能欠缺
-	if err := viper.Unmarshal(&config); err != nil {
-		return nil, err
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("decode config %q: %w", configPath, err)
 	}
 	return &config, nil
 }
 
-// WatchConfig 动态监控配置变化
+// WatchConfig watches the file configured on the global Viper instance.
+// LoadEcoConfig and Reload do not configure this watcher or update its state.
 func WatchConfig(callback func()) {
 	viper.OnConfigChange(func(e fsnotify.Event) {
 		slog.Info(fmt.Sprintf("Config file changed: %s", e.Name))
