@@ -330,26 +330,25 @@ literal: "prefix-${PROFILE_PASTED_FLOW_MIDDLE:}-suffix"
 	}
 }
 
-func TestLoadEcoConfigWithValuesSupportsIncludeInPastedYAML(t *testing.T) {
+func TestLoadEcoConfigIncludesFromFileAndBytes(t *testing.T) {
 	configDir := t.TempDir()
 	writeTestFile(t, configDir, "prompt.tpl", "system: keep field names\nline #2\n")
 	writeTestFile(t, configDir, "nested/message.txt", "nested template\nwith: colon\n")
 	writeTestFile(t, configDir, "items/first.txt", "first item")
 	writeTestFile(t, configDir, "items/second.txt", "second item\n")
 
-	configPath := filepath.Join(configDir, "ecosystem.yaml")
-	writeFile(t, configPath, `
+	const content = `
 prompt: !include ${PROFILE_INCLUDE_PROMPT:prompt.tpl}
 nested:
   template: !include ./nested/message.txt
 templates:
   - !include ./items/first.txt
   - !include ${PROFILE_INCLUDE_SECOND:./items/default.txt}
-`)
+`
+	configPath := filepath.Join(configDir, "ecosystem.yaml")
+	values := map[string]any{"PROFILE_INCLUDE_SECOND": "./items/second.txt"}
 
-	config, err := LoadEcoConfigWithValues[includeConfig](configPath, map[string]any{
-		"PROFILE_INCLUDE_SECOND": "./items/second.txt",
-	})
+	embedded, err := LoadEcoConfigFromBytes[includeConfig]([]byte(content), configPath, values)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,8 +359,17 @@ templates:
 		}{Template: "nested template\nwith: colon\n"},
 		Templates: []string{"first item", "second item\n"},
 	}
+	if !reflect.DeepEqual(embedded, want) {
+		t.Fatalf("!include from bytes:\n got: %#v\nwant: %#v", embedded, want)
+	}
+
+	writeFile(t, configPath, content)
+	config, err := LoadEcoConfigWithValues[includeConfig](configPath, values)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(config, want) {
-		t.Fatalf("!include YAML mismatch:\n got: %#v\nwant: %#v", config, want)
+		t.Fatalf("!include from file:\n got: %#v\nwant: %#v", config, want)
 	}
 }
 

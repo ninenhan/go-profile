@@ -183,12 +183,19 @@ func LoadEcoConfig[T any](configPath string) (*T, error) {
 // LoadEcoConfigWithValues loads one config file with exact-name placeholder values.
 // Like LoadEcoConfig, each call uses an independent Viper instance.
 func LoadEcoConfigWithValues[T any](configPath string, values map[string]any) (*T, error) {
-	fs, err := os.ReadFile(configPath)
+	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", configPath, err)
 	}
-	str := string(fs)
-	raw, err := replaceWithValues(str, values)
+	return LoadEcoConfigFromBytes[T](content, configPath, values)
+}
+
+// LoadEcoConfigFromBytes loads YAML content, such as a //go:embed byte slice,
+// with the same exact-name placeholder values as LoadEcoConfigWithValues.
+// Pass nil when no explicit values are needed. configPath identifies the YAML
+// in errors and supplies the base directory for relative !include files on disk.
+func LoadEcoConfigFromBytes[T any](content []byte, configPath string, values map[string]any) (*T, error) {
+	raw, err := replaceWithValues(string(content), values)
 	if err != nil {
 		return nil, fmt.Errorf("replace placeholders in config %q: %w", configPath, err)
 	}
